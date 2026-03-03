@@ -1,5 +1,6 @@
 import tkinter as tk
 import mss
+import mss.tools
 import time
 import threading
 
@@ -17,7 +18,6 @@ def capture_screen(filename="current_screen.png", return_bytes=False):
         
         if return_bytes:
             print("Returning raw inline bytes for memory-optimized LLM analysis.")
-            import mss.tools
             png_bytes = mss.tools.to_png(screenshot.rgb, screenshot.size)
             return png_bytes, monitor
             
