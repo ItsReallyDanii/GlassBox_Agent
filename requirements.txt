@@ -1,0 +1,4 @@
+mss
+google-genai
+firebase-admin
+pynput
