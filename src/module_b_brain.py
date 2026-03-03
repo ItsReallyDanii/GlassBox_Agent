@@ -44,7 +44,7 @@ def get_ui_coordinates(image_source: Union[str, bytes], user_issue: str) -> Opti
     }
 
     # 3. Transmit Payload to Cloud Run
-    print(f"Contacting Cloud Run Backend at {CLOUD_RUN_URL}...")
+    print(f"Contacting Cloud Run Backend at https://glassbox-brain-***.run.app...")
     try:
         response = requests.post(CLOUD_RUN_URL, json=payload, headers=headers)
         

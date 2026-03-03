@@ -63,6 +63,14 @@ def run_it_support_task(user_issue):
     abs_x = monitor_bounds["left"] + x
     abs_y = monitor_bounds["top"] + y
     
+    # Clamp width/height so an overlay doesn't exceed screen dimensions bounds
+    width = min(width, monitor_bounds["width"] - x)
+    height = min(height, monitor_bounds["height"] - y)
+    
+    # Safety clamp: avoid negative widths/heights
+    width = max(10, width)
+    height = max(10, height)
+    
     center_x = abs_x + (width // 2)
     center_y = abs_y + (height // 2)
     
@@ -71,6 +79,7 @@ def run_it_support_task(user_issue):
     
     # 4. Highlight UI element asynchronously
     module_a_vision.draw_glass_box(abs_x, abs_y, width, height, duration=5000)
+    time.sleep(1.5)
     
     # 5. Non-blocking Authorization with Timeout (Dynamic UI Shift Protection)
     print("\n" + "="*50)

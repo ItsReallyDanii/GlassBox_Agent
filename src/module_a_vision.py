@@ -30,15 +30,25 @@ def _draw_box_thread(x, y, width, height, duration):
     # Initialize the transparent window
     root = tk.Tk()
     root.overrideredirect(True) # Removes the standard window borders/close buttons
-    root.attributes("-alpha", 0.4) # Sets transparency (0.0 to 1.0)
     root.attributes("-topmost", True) # Forces the box to stay on top of all other windows
     
-    # Create the red highlight box
-    canvas = tk.Canvas(root, width=width, height=height, bg='red', highlightthickness=3, highlightbackground='darkred')
+    # Try to make the background color transparent
+    try:
+        root.attributes("-transparentcolor", "white")
+    except Exception:
+        pass
+    
+    # Create the transparent canvas (white will be keyed out by transparentcolor if supported)
+    canvas = tk.Canvas(root, width=width, height=height, bg='white', highlightthickness=0)
     canvas.pack()
     
+    # Draw pure outline rectangle inside the canvas, inset by 4px to avoid clipping the 8px wide stroke
+    canvas.create_rectangle(4, 4, int(width)-4, int(height)-4, outline="red", width=8)
+    
+    # Optional text label for unambiguous targeting
+    canvas.create_text(8, 8, text="TARGET", fill="red", font=("Segoe UI", 12, "bold"), anchor="nw")
+    
     # Position the box on the screen using the absolute X/Y coordinates
-    # Forcing geometry to properly format signs for negative coordinate scaling
     x_str = f"+{int(x)}" if int(x) >= 0 else f"{int(x)}"
     y_str = f"+{int(y)}" if int(y) >= 0 else f"{int(y)}"
     root.geometry(f"{int(width)}x{int(height)}{x_str}{y_str}")
