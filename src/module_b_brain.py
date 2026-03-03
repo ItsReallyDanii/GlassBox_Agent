@@ -2,14 +2,16 @@ import os
 import json
 from google import genai
 from google.genai import types
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 
-def get_ui_coordinates(image_path: str, user_issue: str) -> Optional[Dict[str, int]]:
+def get_ui_coordinates(image_source: Union[str, bytes], user_issue: str) -> Optional[Dict[str, int]]:
     """
     Uses Gemini 3.0 Pro to analyze a screenshot and identify the UI element 
     needed to resolve the user's issue. Returns coordinates in JSON format.
+    Optimized to support raw memory bytes (inline base64 processing) to prevent
+    leakage on Google file storage.
     """
-    # 1. API Configuration (Using environment variable for security)
+    # 1. API Configuration
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         print("Error: GOOGLE_API_KEY environment variable not set.")
@@ -17,18 +19,21 @@ def get_ui_coordinates(image_path: str, user_issue: str) -> Optional[Dict[str, i
         
     client = genai.Client(api_key=api_key)
 
-    # 2. Upload the screenshot to the Gemini API
-    print(f"Uploading image {image_path} to Gemini...")
-    try:
-         captured_file = client.files.upload(file=image_path)
-    except Exception as e:
-         print(f"Failed to upload image: {e}")
-         return None
+    # 2. Upload / Format image representation
+    if isinstance(image_source, bytes):
+        print("Uploading image to Gemini via highly-optimized inline base64 processing...")
+        gemini_image = types.Part.from_bytes(data=image_source, mime_type="image/png")
+    else:
+        print(f"Uploading image {image_source} to Gemini via files.upload...")
+        try:
+             gemini_image = client.files.upload(file=image_source)
+        except Exception as e:
+             print(f"Failed to upload image: {e}")
+             return None
 
     # 3. Prompt Setup
-    # Instructing the model specifically for UI detection and JSON formatting
     prompt = f"""
-    Analyize this screenshot. The user is reporting the following issue: "{user_issue}"
+    Analyze this screenshot. The user is reporting the following issue: "{user_issue}"
     
     Identify the single most relevant UI element (button, link, field, etc.) that the user should interact with to resolve this.
     
@@ -50,19 +55,16 @@ def get_ui_coordinates(image_path: str, user_issue: str) -> Optional[Dict[str, i
     try:
         response = client.models.generate_content(
             model="gemini-2.5-pro",
-            contents=[captured_file, prompt]
+            contents=[gemini_image, prompt]
         )
         
         # 5. Parse the JSON response
         text_response = response.text.strip()
         
-        # Handle cases where the model might still wrap in markdown code blocks
+        # Robust markdown cleanup
         if text_response.startswith("```"):
-            # Extract content from inside triple backticks
             lines = text_response.splitlines()
-            # Find the first line that is just "```json" or "```"
             start_idx = 1 if lines[0].startswith("```") else 0
-            # Find the last line that is "```"
             if lines[-1].strip() == "```":
                 text_response = "\n".join(lines[start_idx:-1]).strip()
             else:
@@ -70,6 +72,15 @@ def get_ui_coordinates(image_path: str, user_issue: str) -> Optional[Dict[str, i
 
         coordinates = json.loads(text_response)
         print(f"Element identified: {coordinates}")
+        
+        # 6. Cleanup if using File API
+        if not isinstance(image_source, bytes):
+            try:
+                gemini_image.delete()
+                print("Cleaned up File API upload to prevent resource leak.")
+            except Exception:
+                pass
+                
         return coordinates
 
     except Exception as e:
@@ -79,16 +90,7 @@ def get_ui_coordinates(image_path: str, user_issue: str) -> Optional[Dict[str, i
         return None
 
 if __name__ == "__main__":
-    # Test case: Finding the "Submit" button in a local screenshot
-    # Note: Requires a valid GOOGLE_API_KEY environment variable
-    test_image = "current_screen.png"
-    test_issue = "I am ready to send my application but I can't find the finish button."
-    
-    if os.path.exists(test_image):
-        coords = get_ui_coordinates(test_image, test_issue)
-        if coords:
-            print(f"Successfully found coordinates: {coords}")
-        else:
-            print("Failed to find UI element.")
-    else:
-        print(f"Please run module_a_vision.py first to generate {test_image}")
+    # Test case: requires valid GOOGLE_API_KEY
+    if os.path.exists("current_screen.png"):
+        coords = get_ui_coordinates("current_screen.png", "Test issue")
+        print(f"Coords: {coords}")
