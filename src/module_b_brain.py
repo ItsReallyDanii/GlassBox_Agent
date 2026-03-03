@@ -1,96 +1,90 @@
 import os
 import json
-from google import genai
-from google.genai import types
-from typing import Dict, Optional, Union
+import base64
+import requests
+from typing import Dict, Optional, Union, Any
 
-def get_ui_coordinates(image_source: Union[str, bytes], user_issue: str) -> Optional[Dict[str, int]]:
+CLOUD_RUN_URL = "https://glassbox-brain-454249288947.us-central1.run.app/"
+
+def get_ui_coordinates(image_source: Union[str, bytes], user_issue: str) -> Optional[Dict[str, Any]]:
     """
-    Uses Gemini 3.0 Pro to analyze a screenshot and identify the UI element 
-    needed to resolve the user's issue. Returns coordinates in JSON format.
-    Optimized to support raw memory bytes (inline base64 processing) to prevent
-    leakage on Google file storage.
+    Thin client to communicate with the Cloud Run Gemini backend.
+    Takes memory-optimized inline bytes (or a file path) and returns JSON coordinates.
     """
-    # 1. API Configuration
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        print("Error: GOOGLE_API_KEY environment variable not set.")
+    if not isinstance(image_source, (str, bytes)):
+        print(f"Error: Invalid image_source type: {type(image_source)}")
         return None
-        
-    client = genai.Client(api_key=api_key)
 
-    # 2. Upload / Format image representation
+    # 1. Base64 Encode the Image Paylaod
     if isinstance(image_source, bytes):
-        print("Uploading image to Gemini via highly-optimized inline base64 processing...")
-        gemini_image = types.Part.from_bytes(data=image_source, mime_type="image/png")
-    else:
-        print(f"Uploading image {image_source} to Gemini via files.upload...")
         try:
-             gemini_image = client.files.upload(file=image_source)
+            image_b64 = base64.b64encode(image_source).decode('utf-8')
+            print("Successfully encoded raw bytes to base64.")
         except Exception as e:
-             print(f"Failed to upload image: {e}")
-             return None
+            print(f"Failed to encode raw bytes: {e}")
+            return None
+    else:
+        try:
+            with open(image_source, "rb") as f:
+                image_bytes = f.read()
+                image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+            print(f"Successfully read and encoded file: {image_source}")
+        except Exception as e:
+            print(f"Failed to read image file {image_source}: {e}")
+            return None
 
-    # 3. Prompt Setup
-    prompt = f"""
-    Analyze this screenshot. The user is reporting the following issue: "{user_issue}"
+    # 2. Prepare JSON Payload
+    payload = {
+        "image_b64": image_b64,
+        "user_issue": user_issue
+    }
     
-    Identify the single most relevant UI element (button, link, field, etc.) that the user should interact with to resolve this.
-    
-    Return ONLY a raw JSON object with the bounding box coordinates of that element. 
-    Use the following schema:
-    {{
-      "x": integer,
-      "y": integer,
-      "width": integer,
-      "height": integer
-    }}
-    
-    Do not include any conversational text, markdown formatting, or explanations. Just the JSON.
-    """
+    headers = {
+        "Content-Type": "application/json"
+    }
 
-    # 4. Generate Content using the requested model
-    print("Awaiting UI analysis from Gemini 2.5 Pro...")
-    
+    # 3. Transmit Payload to Cloud Run
+    print(f"Contacting Cloud Run Backend at {CLOUD_RUN_URL}...")
     try:
-        response = client.models.generate_content(
-            model="gemini-2.5-pro",
-            contents=[gemini_image, prompt]
-        )
+        response = requests.post(CLOUD_RUN_URL, json=payload, headers=headers)
         
-        # 5. Parse the JSON response
-        text_response = response.text.strip()
-        
-        # Robust markdown cleanup
-        if text_response.startswith("```"):
-            lines = text_response.splitlines()
-            start_idx = 1 if lines[0].startswith("```") else 0
-            if lines[-1].strip() == "```":
-                text_response = "\n".join(lines[start_idx:-1]).strip()
-            else:
-                text_response = "\n".join(lines[start_idx:]).strip()
-
-        coordinates = json.loads(text_response)
-        print(f"Element identified: {coordinates}")
-        
-        # 6. Cleanup if using File API
-        if not isinstance(image_source, bytes):
+        # 4. Robust Error Decoding
+        if response.status_code != 200:
+            print(f"HTTP ERROR: Cloud Run server returned status code {response.status_code}")
             try:
-                gemini_image.delete()
-                print("Cleaned up File API upload to prevent resource leak.")
+                print(f"Raw Server Response:\n{response.text}")
             except Exception:
                 pass
-                
-        return coordinates
+            return None
 
-    except Exception as e:
-        print(f"Failed to retrieve or parse coordinates: {e}")
-        if 'response' in locals() and hasattr(response, 'text'):
-            print(f"Raw Response: {response.text}")
+        response_data = response.json()
+        print(f"Parsed Server JSON Response metadata: {response_data.get('element_description', 'No description found')}")
+
+        if "error" in response_data:
+            print(f"Server returned an explicit error object: {response_data['error']}")
+            return None
+            
+        required_keys = ["x", "y", "width", "height"]
+        if not all(k in response_data for k in required_keys):
+            print(f"ValidationError: Response is missing coordinate keys. Expected {required_keys}, Got: {list(response_data.keys())}")
+            return None
+            
+        print("Coordinates successfully matched!")
+        return response_data
+
+    except requests.exceptions.RequestException as e:
+        print(f"Network Request Failed. Could not reach {CLOUD_RUN_URL}: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"Failed to parse server response as JSON: {e}")
+        try:
+            if hasattr(response, 'text'):
+                print(f"Raw Invalid Output:\n{response.text}")
+        except Exception:
+            pass
         return None
 
 if __name__ == "__main__":
-    # Test case: requires valid GOOGLE_API_KEY
     if os.path.exists("current_screen.png"):
         coords = get_ui_coordinates("current_screen.png", "Test issue")
         print(f"Coords: {coords}")
